@@ -2,27 +2,38 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { generateInviteLink } from '@/lib/utils'
 import { sendTenderInvitation } from '@/lib/email'
+import { auth } from '@/lib/auth'
 
 export async function GET() {
-  try {
-    const tenders = await prisma.tender.findMany({
-      include: {
-        _count: {
-          select: { bids: true, invitations: true }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
-    })
-    
-    return NextResponse.json(tenders)
-  } catch (error) {
-    console.error('Error fetching tenders:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch tenders' },
-      { status: 500 }
-    )
+    try {
+      const session = await auth()
+
+      if (!session?.user?.id) {
+        return NextResponse.json(
+          { error: 'Unauthorized' },
+          { status: 401 }
+        )
+      }
+
+      const tenders = await prisma.tender.findMany({
+        where: { userId: session.user.id },
+        include: {
+          _count: {
+            select: { bids: true, invitations: true }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      })
+
+      return NextResponse.json(tenders)
+    } catch (error) {
+      console.error('Error fetching tenders:', error)
+      return NextResponse.json(
+        { error: 'Failed to fetch tenders' },
+        { status: 500 }
+      )
+    }
   }
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,20 +46,27 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const userId = 'default-user-id'
-    const expiresAt = new Date(Date.now() + durationHours * 60 * 60 * 1000)
+  const session = await auth()
 
-    // Ensure default user exists
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: {
-        id: userId,
-        name: 'Administrator',
-        email: 'admin@bravah.com',
-        language: 'en'
-      }
-    })
+  if (!session?.user?.id) {
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401 }
+    )
+  }
+
+  const { productName, units, paymentCondition, durationHours, selectedSuppliers,
+   images, preferences } = await request.json()
+
+  if (!productName || !units || !paymentCondition || !durationHours ||
+  !selectedSuppliers?.length) {
+    return NextResponse.json(
+      { error: 'Missing required fields' },
+      { status: 400 }
+    )
+  }
+
+  const userId = session.user.id
 
     const tender = await prisma.tender.create({
       data: {
